@@ -1,0 +1,323 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"math"
+	"math/rand"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+const clr string = "\033[H\033[2J"
+var (
+  //shortcuts
+	pl = fmt.Println
+	pf = fmt.Printf
+	p  = fmt.Print
+	sl = fmt.Scanln
+	sf = fmt.Scanf
+	s  = fmt.Scan
+
+  
+  stocks[] stockInfo = []stockInfo{{"Tesla", "TSLA", 171.76, 0}, {"Apple Inc", "AAPL", 152.36, 0}, {"Microsoft Corp", "MSFT", 255.27, 0}, {"Adobe Inc", "ADBE", 330.09, 0}, {"Amazon Inc", "AMZN", 93.27, 0}, {"McDonald's Corp", "MCD", 265.73, 0}, {"Domino's Pizza Inc", "DPZ", 308.21, 0}, {"Netflix Inc", "NFLX", 294.86, 0}, {"Walt Disney Co", "DIS", 94.07, 0}, {"Electronic Arts Inc", "EA", 111.70, 0}}
+
+  // my "uniScanner" stuff
+  choiceString string
+  choiceInt int
+
+  user userInfo
+
+  alphabetized bool
+)
+
+type userInfo struct {
+  balance float64
+  portfolio[] portfolioInfo
+  purchase float64
+  netGain float64
+}
+// 19 characters for names
+type stockInfo struct {
+  name, abbr string
+  value float64
+  percent int
+}
+
+
+type portfolioInfo struct {
+  abbr string
+  stock int
+}
+
+func stockDisplay() {
+  p("\033[s")
+  switch {
+    case strings.EqualFold("asc", choiceString) || strings.EqualFold("desc", choiceString):
+    stocks = insertionSortInt(stocks)
+    case strings.EqualFold("az", choiceString) || strings.EqualFold("za", choiceString):
+    stocks = insertionSortString(stocks)
+  }
+  p("\033[H")
+  for x := 0; x < 21; x++ {
+    p("\033[48G\033[1K\033[B")
+  }
+  pl("\033[H\033[1mAbbr\033[8GStock Name\033[29GValue\033[0m\n")
+  for x := 0; x < len(stocks); x++ {
+    pf("|%v\033[6G|\033[8G%v\033[29G%v", stocks[x].abbr, stocks[x].name, stocks[x].value)
+    switch  {
+      case stocks[x].percent < 0:
+      pf(" \033[31m\033[39G(%v DOWN)\033[0m", stocks[x].percent )
+      case stocks[x].percent >= 0:
+      pf(" \033[32m\033[39G(+%v UP)\033[0m", stocks[x].percent )
+    }
+    p("\n\n")
+  }
+  p("\033[u")
+}
+
+func portfolioDisplay() {
+  p("\033[s")
+  p("\033[H")
+  for x := 0; x < 21; x++ {
+    p("\033[51G\033[0K\033[B")
+  }
+  pl("\033[H\033[53G\033[1mPORTFOLIO\033[0m\n")
+  for x := 0; x < len(user.portfolio); x++ {
+    pf("\033[53G|%v\033[58G|\033[61G%v\n\n", user.portfolio[x].abbr, user.portfolio[x].stock)
+  }
+  p("\033[u")
+}
+
+func stockLoop() {
+  for {
+    valueChange()   
+    stockDisplay()
+    time.Sleep(3 * time.Second)
+  }
+}
+
+//___________________________________MAIN_________
+func main() {
+  for x := 0; x < 25; x++ {
+    pl(".")
+    time.Sleep(time.Millisecond * 100)
+  }
+  p(clr)
+  p("\033[H")
+  user.portfolio = make([]portfolioInfo, 10, 10)
+  for x := 0; x < len(stocks); x++ {
+    user.portfolio[x].abbr = stocks[x].abbr
+  }
+  user.portfolio = insertionSortPortfolio(user.portfolio)
+  user.balance = 10000
+  // middle line
+  for x := 0; x < 21; x++ {
+    p("\033[50G|\033[B")
+  }
+  portfolioDisplay()
+  
+  p("\n\033[0G----------------------------------------------------------------------------\033[B\033[0G([ASC] [DESC] [AZ] [ZA]) to order by: [Ascending] [Descending] [A-Z] [Z-A]\nType the abrreviation of the Stock you wish to BUY/SELL\n----------------------------------------------------------------------------\n")
+  
+
+  p("\033[H")
+  
+  go stockLoop()
+  
+  for {
+    var balanceColour string
+    if user.balance > 0 {
+      balanceColour = "\033[32m"
+      
+    } else {
+      balanceColour = "\033[31m"
+    }
+    pf("\033[H\033[25B\033[2K\nBALANCE: %v%v\033[0m\033[30GNet Gain: %v%%\n\n",balanceColour, user.balance, user.netGain)
+    
+    uniScanner()
+    var pos int = -1
+    if alphabetized == true {
+      pos = binarySearchStocks(strings.ToUpper(choiceString), stocks)
+    } else {
+      for x := 0; x < len(stocks); x++ {
+        if strings.EqualFold(stocks[x].abbr, choiceString) {
+          pos = x
+        }
+      }
+    }
+    if pos != -1 {
+      pl("[B/S?] (buy or sell) ['0' to skip]")
+      uniScanner()
+      if !(strings.EqualFold("b", choiceString) || (strings.EqualFold("s", choiceString))){
+        p("\033[1A\033[2K")
+        goto EXITBS
+      }
+      trade := choiceString
+      choiceReset()
+      pl("[AMOUNT] to buy/sell ['0' to skip]")
+      uniScanner()
+      p("\033[1A\033[2K\033[1A\033[2K")
+      switch {
+        case strings.EqualFold("b", trade):
+        buyStock(pos, choiceInt)
+        case strings.EqualFold("s", trade):
+        sellStock(pos, choiceInt)
+      }
+      portfolioDisplay()
+    }
+    EXITBS:
+    
+    switch {
+      case strings.EqualFold("end", choiceString):
+      os.Exit(0)
+      case strings.EqualFold("az", choiceString) || strings.EqualFold("za", choiceString):
+      alphabetized = true
+      stockDisplay()
+      case strings.EqualFold("asc", choiceString) || strings.EqualFold("desc", choiceString):
+      alphabetized = false
+      stockDisplay()
+    }
+  }
+}
+
+func buyStock(stockNum int, amount int) {
+    user.balance = math.Round((user.balance - (stocks[stockNum].value * float64(amount)))*100)/100
+    user.purchase = stocks[stockNum].value * float64(amount)
+    pos := binarySearch(stocks[stockNum].abbr, user.portfolio)
+    user.portfolio[pos].stock += 1 * amount
+}
+
+func sellStock(stockNum int, amount int) {
+  user.balance = math.Round((user.balance + (stocks[stockNum].value * float64(amount)))*100)/100
+  pos := binarySearch(stocks[stockNum].abbr, user.portfolio)
+  user.portfolio[pos].stock -= amount
+  if user.portfolio[pos].stock < 0{
+    user.portfolio[pos].stock = 0
+  }
+  gain := stocks[stockNum].value * float64(amount)
+  user.netGain = math.Round(((gain / 10000) * 100)*100)/100
+}
+func valueChange() {
+  for x := 0; x < len(stocks); x++ {
+    rand.Seed(time.Now().UnixNano())
+    percentage := rand.Intn(20)+1
+    if percentage <= 10 {
+      rand.Seed(time.Now().UnixNano())
+      switch rand.Intn(2) {
+        case 0:
+        percentage *= -1
+      }
+    }
+    stocks[x].percent = percentage
+    add :=  (stocks[x].value * ((float64(percentage)/100)))
+    stocks[x].value = math.Round((stocks[x].value + add)*100)/100
+  }
+}
+
+func insertionSortInt(arr []stockInfo) []stockInfo {
+  switch {
+    case strings.EqualFold("desc", choiceString):
+    for i := 1; i < len(arr); i++ {
+      for j := i; j > 0 && arr[j-1].value > arr[j].value; j-- {  
+        arr[j], arr[j-1] = arr[j-1], arr[j]
+      }
+    }
+    case strings.EqualFold("asc", choiceString):
+    for i := 1; i < len(arr); i++ {
+      for j := i; j > 0 && arr[j-1].value < arr[j].value; j-- {  
+        arr[j], arr[j-1] = arr[j-1], arr[j]
+      }
+    }
+  }
+	
+	return arr
+}
+
+func insertionSortString(arr []stockInfo) []stockInfo {
+  switch {
+    case strings.EqualFold("az", choiceString):
+    for i := 1; i < len(arr); i++ {
+  		for j := i; j > 0 && arr[j-1].abbr > arr[j].abbr; j-- {
+  			arr[j], arr[j-1] = arr[j-1], arr[j]
+  		}
+  	}
+    case strings.EqualFold("za", choiceString):
+    for i := 1; i < len(arr); i++ {
+  		for j := i; j > 0 && arr[j-1].abbr < arr[j].abbr; j-- {  
+  			arr[j], arr[j-1] = arr[j-1], arr[j]
+  		}
+  	}
+  }
+	
+	return arr
+}
+
+func insertionSortPortfolio(arr []portfolioInfo) []portfolioInfo {
+  for i := 1; i < len(arr); i++ {
+    for j := i; j > 0 && arr[j-1].abbr > arr[j].abbr; j-- {
+      arr[j], arr[j-1] = arr[j-1], arr[j]
+    }
+  }
+	return arr
+}
+func binarySearch(needle string, haystack []portfolioInfo) int {
+  var pos int = -1 // if pos is still -1, not foundand 
+	low := 0
+	high := len(haystack) - 1
+	for low <= high {
+		median := (low + high) / 2
+    switch  {
+      case haystack[median].abbr == needle:
+			  pos = median
+        return pos
+      case haystack[median].abbr < needle:
+        low = median + 1
+      case haystack[median].abbr > needle:
+        high = median - 1
+    }
+  }  // end for
+	return pos
+}
+func binarySearchStocks(needle string, haystack []stockInfo) int {
+  var pos int = -1 // if pos is still -1, not foundand 
+	low := 0
+	high := len(haystack) - 1
+	for low <= high {
+		median := (low + high) / 2
+    switch  {
+      case haystack[median].abbr == needle:
+			  pos = median
+        return pos
+      case haystack[median].abbr < needle:
+        low = median + 1
+      case haystack[median].abbr > needle:
+        high = median - 1
+    }
+  }  // end for
+	return pos
+}
+
+func uniScanner() { // custom scanner to scan strings and ints
+	scanner := bufio.NewScanner(os.Stdin)
+	var typeString string
+	var typeInt int = -1
+  choiceReset()
+	for len(typeString) == 0 || typeInt == -1{
+		scanner.Scan()
+    p("\033[1A\033[2K")
+		typeString = scanner.Text()
+		typeInt, _ = strconv.Atoi(scanner.Text())
+		if typeInt > 0 {
+			choiceInt = typeInt
+		}
+    if len(typeString) > 0 && typeString != "0" {
+			choiceString = typeString
+		}
+	}
+}
+
+func choiceReset() {
+  choiceInt = 0
+  choiceString = ""
+}
