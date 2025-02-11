@@ -1,0 +1,346 @@
+package main
+
+import (
+	"fmt"
+  "bufio"
+  "strconv"
+  "os"
+  "strings"
+  "math/rand"
+  "time"
+)
+
+const (
+  clr string = "\033[H\033[2J"
+  // in case clr doesn't work
+  clr2 string = "\x1bc"
+
+  // Cursor Control
+  begLine string = "\033[0F\033[0E"
+
+  // Colours
+  black string   = "\033[30m"
+  red string     = "\033[31m"
+  green string   = "\033[32m"
+  yellow string  = "\033[33m"
+  blue string    = "\033[34m"
+  magenta string = "\033[35m"
+  white string   = "\033[37m"
+  
+  // Graphic Modes
+  grReset string = "\033[0m"
+  grBold string = "\033[1m"
+  grFaint string = "\033[2m"
+  grItalic string = "\033[3m"
+  grUnderline string = "\033[4m"
+  grBlink string = "\033[5m"
+  grInverse string = "\033[6m"
+  grSave string = "\033 7"
+  grRestore string = "\033 8"
+
+  // Erase functions
+  erDisplay string = "\033[J"
+  erEndScreen string = "\033[0J"
+  erBegScreen string = "\033[1J"
+  erScreen string = "\033[2J"
+  erSaved string = "\033[3J"
+  erLine string = "\033[K"
+  erCursLine string = "\033[0K"
+  erLineCurse string = "\033[1K"
+  erEntireLine string = "\033[2K"
+
+  saveScreen = "\033[?47h" 
+  restoreScreen= "\033[?47l"
+)
+
+var (
+  //shortcuts
+	pl = fmt.Println
+	pf = fmt.Printf
+	p  = fmt.Print
+	sl = fmt.Scanln
+	sf = fmt.Scanf
+	s  = fmt.Scan
+
+  // my "uniScanner" stuff
+  choiceString string
+  choiceInt int
+
+  guess[] string
+  wordle string
+  help[] string
+  posiHelp[] string
+  helped bool
+  helpN[] int
+
+  board[6][5] string
+  
+  boardRow int
+  
+  keyboard[] string
+
+  // keyboardLayout[] string = []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"}
+  
+  // keyboardLayout[] string = []string{"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "A", "S", "D", "F", "G", "H", "J", "K", "L", "Z", "X", "C", "V", "B", "N", "M"}
+
+  win bool
+
+)
+func reset() {
+  board  = [6][5]string{
+    {" ", " ", " ", " ", " "},
+    {" ", " ", " ", " ", " "},
+    {" ", " ", " ", " ", " "},
+    {" ", " ", " ", " ", " "},
+    {" ", " ", " ", " ", " "},
+    {" ", " ", " ", " ", " "},
+  }
+  choiceString = ""
+  guess = []string{}
+  help = []string{" ", " ", " ", " ", " "}
+  helpN = []int{0, 1, 2, 3, 4}
+  helped = false
+  boardRow = 0
+  keyboard = []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"}
+  win = false
+}
+
+func main() {
+  reset()
+	p(clr)
+  pl("WELCOME TO FAKE WORDLE")
+  pl("\n\nWhen playing, type 'HELP' to learn\na random letter from the correct WORD\nif you really need a hint\n\nYou may only be helped once\n")
+  pl("PRESS 'ENTER' TO PLAY")
+  sl()
+  p(clr)
+  gameplay()
+}
+
+func gameplay() { //============================GMAE=========================
+  rand.Seed(time.Now().UnixNano())
+  wordle = strings.ToUpper(wordBank[rand.Intn(len(wordBank))])
+  for x := 0; x < len(wordle); x++ {
+    posiHelp = append(posiHelp, wordle[x:x+1])
+  }
+  wordleDisplay()
+  keyboardDisplay()
+  for x := 0; x < 6; x++ {
+    guess = make([]string, 0, 5)
+    choiceReset()
+    for len(choiceString) != 5 {
+      pf("THIS IS THE HELP CENTER: %v\n", help)
+      
+      wordCheck := -2
+      uniScanner()
+      p("\033[1A\033[2K")
+      choiceString = strings.ToUpper(choiceString)
+      if strings.EqualFold("HELP", choiceString) {
+        HELP()
+      }
+      if len(choiceString) == 5 {
+      wordCheck = binarySearch(strings.ToLower(choiceString), wordBank)
+      }
+      if wordCheck == -1 {
+        choiceString = choiceString[0:4]
+        p("\033[1A\033[2K")
+        pf("\033[H\033\033[7B\033[25GNOT IN WORD LIST")
+        p("\033[H\033[19B")
+      }
+    }
+    for w := 0; w < len(choiceString); w++ {
+      guess = append(guess, choiceString[w:w+1])
+    }
+    keyboard = keyboardColours(keyboard)
+    for y := 0; y < 5; y++ {
+      board[x][y] = guess[y]
+    }
+    wordleDisplay()
+    keyboardDisplay()
+    if choiceString == wordle{
+      win = true
+      break
+    }
+  }
+  if win {
+    pf("\033[H\033\033[7B\033[25G%vCONGRATULATIONS ! !", grBold)
+    pf("\033[H\033\033[8B\033[25GYOU HAVE GUESSED THE WORD")
+    pf("\033[H\033\033[9B\033[25G|%v|%v", wordle, grReset)
+  } else {
+    pf("\033[H\033\033[7B\033[25G%vOOF TOO BAD ", grBold)
+    pf("\033[H\033\033[8B\033[25GTHE WORD WAS")
+    pf("\033[H\033\033[9B\033[25G|%v|%v", wordle, grReset)
+  }
+  p("\033[H\033[19B")
+  pl("INPUT 'Q' TO QUIT")
+  pl("INPUT 'R' TO RESTART")
+  uniScanner()
+  switch {
+    case strings.EqualFold("Q", choiceString):
+    pl(clr + "THANKS FOR PLAYING ! !")
+    os.Exit(0)
+    case strings.EqualFold("R", choiceString):
+    main()
+  }
+}//================================GMAE END===================================
+
+func HELP() {
+  if !helped {
+    var num int = rand.Intn(len(helpN))
+    if len(helpN) != 0{
+      help[helpN[num]] = (green + posiHelp[helpN[num]] + grReset)
+    }
+    helpN = sliceRemoveInOrder(helpN, num)
+    helped = true 
+  }
+}
+
+func keyboardColours(letters[] string) []string {
+  // var newKeyboard = make([]string, 0, 26)
+  var wordMatch = make([]string, 0, 5)
+  var pos = make([]int, 0, 5)
+  var wordNo  = make([]string, 0, 5)
+  var noPos = make([]int, 0, 5)
+  for x := 0; x < len(choiceString); x++ {
+    if wordle[x:x+1] == choiceString[x:x+1] {
+      wordMatch = append(wordMatch, choiceString[x:x+1])
+      pos = append(pos, x)
+    } else {
+      wordNo = append(wordNo, choiceString[x:x+1])
+      noPos = append(noPos, x)
+    }
+  }
+  pl(wordle)
+  if len(wordNo) != 0 {
+    for x := 0; x < len(wordNo); x++ {
+      for y := 0; y < len(letters); y++ {
+        switch {
+          case strings.Contains(letters[y], wordNo[x]) && strings.Contains(wordle, wordNo[x]):     // YELLOW
+          letters[y] = (yellow + letters[y] + grReset)
+          guess[noPos[x]] = (yellow + wordNo[x] + grReset)
+          case strings.Contains(letters[y], wordNo[x]): //BLACK
+          letters[y] = (black + letters[y] + grReset)
+          guess[noPos[x]] = (black + wordNo[x] + grReset)
+        }
+      }
+    }
+  }
+  if len(wordMatch) != 0 {       // GREEEN
+    for x := 0; x < len(wordMatch); x++ {
+      for y := 0; y < len(letters); y++ {
+        if strings.Contains(letters[y], wordMatch[x]){
+          letters[y] = (green + wordMatch[x] + grReset)
+          guess[pos[x]] = (green + wordMatch[x] + grReset)
+          help[pos[x]] = letters[y]
+          if len(helpN) != 0 {
+            // num := binarySearchInt(pos[x], helpN)
+            // helpN = sliceRemoveInOrder(helpN, num)
+          }
+        }
+      }
+    }
+  }
+  return letters
+}
+
+func wordleDisplay() {
+  pf("\033[H\033[14B%v", erBegScreen)
+  pf("\033[H\033[7C%vWORDLE%v", grBold, grReset)
+  pf("%v\n", grUnderline)
+  for r := 0; r < len(board); r++ {
+    pl("\n\033[2C                ")
+    p("\033H\033[2C|")
+    for c := 0; c < len(board[r]); c++ {
+    pf("%v%v |", board[r][c], grUnderline)
+    }
+  }
+  pf("%v", grReset)
+}
+
+func keyboardDisplay() {
+  pf("\033[H\033[15B%v", erEndScreen)
+  pf("\033[H\033[15B%v\033[H\033[16B %v\n\033[H\033[17B   %v\n\n", keyboard[:10], keyboard[10:19], keyboard[19:])
+}
+
+func uniScanner() { // custom scanner to scan strings and ints
+	scanner := bufio.NewScanner(os.Stdin)
+	var typeString string
+	var typeInt int = -1
+  choiceReset()
+	for len(typeString) == 0 || typeInt == -1{
+		scanner.Scan()
+    p("\033[1A\033[2K")
+		typeString = scanner.Text()
+		typeInt, _ = strconv.Atoi(scanner.Text())
+		if typeInt > 0 {
+			choiceInt = typeInt
+		}
+    if len(typeString) > 0 && typeString != "0" {
+			choiceString = typeString
+		}
+	}
+}
+
+func choiceReset() {
+  choiceInt = 0
+  choiceString = ""
+}
+
+func binarySearch(needle string, haystack []string) int {
+  var pos int = -1 // if pos is still -1, not foundand 
+	low := 0
+	high := len(haystack) - 1
+	for low <= high {
+		median := (low + high) / 2
+    
+    switch  {
+      case haystack[median] == needle:
+			  pos = median
+        return pos
+      case haystack[median] < needle:
+        low = median + 1
+      case haystack[median] > needle:
+        high = median - 1
+    }
+  }  // end for
+	return pos
+}
+
+func binarySearchInt(needle int, haystack []int) int {
+  var pos int = -1 // if pos is still -1, not foundand 
+	low := 0
+	high := len(haystack) - 1
+	for low <= high {
+		median := (low + high) / 2
+    
+    switch  {
+      case haystack[median] == needle:
+			  pos = median
+        return pos
+      case haystack[median] < needle:
+        low = median + 1
+      case haystack[median] > needle:
+        high = median - 1
+    }
+  }  // end for
+	return pos
+}
+
+func sliceRemoveInOrder (slice[] int, location int)[]int {
+  for x := location; x < len(slice)-1; x++ {
+    slice[x] = slice[x+1]
+  }
+  return slice[:len(slice)-1]
+}
+
+// func insertionSort(items []string) {
+//     for i := 1; i < len(items); i++ {
+//       j := i
+//       for j > 0 {
+//         if items[j-1] > items[j] {
+//           items[j-1], items[j] = items[j], items[j-1]
+//         }
+//       j--
+//     }
+//   }
+//   return 
+// }
