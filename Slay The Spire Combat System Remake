@@ -1,0 +1,1228 @@
+package main
+
+import (
+	// "container/list"
+	"fmt"
+  "strings"
+  "os"
+  "bufio"
+  "strconv"
+  // "math"
+  "time"
+  "math/rand"
+)
+
+/*Notes to self:
+-  Make seperate function for playing a card (this allows you to check the effect of the card and excecute various effects)
+
+- Function for gameplay loop (battles)
+
+- have a function to search all status effects and another for cards that can search their effects and perform them
+
+- nested array for common, uncommon, rare cards (for RNG)
+
+- Seperate function for displaying the differnt UI
+
+- Seperate function for enemy turn and player turn
+
+- Buffs :
+  Strength - Increase damage from attacks by x (intensity)
+  Dexterity - Increase block from cards by x (intensity)
+  Thorns - When attacked deal x damage back (intensity)
+  Regenerate - at end of turn heals x HP (intensity)
+  Ritual - At end of turn gains x STRENGTH (intensity)
+  Energized - Gain x additional energy next turn (intensity)
+  Regeneration - (from regen potion) at end of turn heals x HP for x turnsand loses on stack (intensity and duration)
+  Plated Armor - At the end of your turn, gain X Block. Receiving unblocked attack damage reduces Plated Armor by 1. (intensity)
+  Draw card - Draw x additional cards this turn (intensity)
+
+- Debuffs :
+  Strength (negative) - Decrease damage from attacks by x (intensity)
+  Dexterity (negative) - decreases damage from attacks by x (intensity)
+  Shackled - Takes away x strength and regains x strength at end of turn (intensity)
+  Frail - block gained is reduced by 25% (intensity)
+  Poison - At beginning of its turn, the target loses x HP and 1 stack of poison (intensity and duration)
+  Vulnerable - Target takes 50% more damage from attacks (duration).
+  Weak - Taget deals 25% less attack damage (duration)
+  No Draw - You may not draw this turn (no)
+*/
+
+const (
+  clr string = "\033[H\033[2J"
+  // in case clr doesn't work
+  clr2 string = "\x1bc"
+
+  // Cursor Control
+  begLine string = "\033[0F\033[0E"
+
+  // Colours
+  red string     = "\033[31m"
+  green string   = "\033[32m"
+  yellow string  = "\033[33m"
+  blue string    = "\033[34m"
+  magenta string = "\033[35m"
+  
+  // Graphic Modes
+  grReset string = "\033[0m"
+  grBold string = "\033[1m"
+  grFaint string = "\033[2m"
+  grItalic string = "\033[3m"
+  grUnderline string = "\033[4m"
+  grBlink string = "\033[5m"
+  grInverse string = "\033[6m"
+  grSave string = "\033 7"
+  grRestore string = "\033 8"
+
+  // Erase functions
+  erDisplay string = "\033[J"
+  erEndScreen string = "\033[0J"
+  erBegScreen string = "\033[1J"
+  erScreen string = "\033[2J"
+  erSaved string = "\033[3J"
+  erLine string = "\033[K"
+  erCursLine string = "\033[0K"
+  erLineCurse string = "\033[1K"
+  erEntireLine string = "\033[2K"
+  
+)
+var(
+  //shortcuts
+  pl = fmt.Println
+  pf = fmt.Printf
+  p = fmt.Print
+  sl = fmt.Scanln
+  sf = fmt.Scanf
+  s = fmt.Scan
+
+  //saves in-combat ui
+  displayUI[] string
+
+  player[2] playerInfo
+  starterCardsIron[3] cardInfo
+  starterCardsSilent[4] cardInfo
+  commonCardsIron[5] cardInfo
+  commonCardsSilent[5] cardInfo
+  uncommonCardsIron[5] cardInfo
+  uncommonCardsSilent[5] cardInfo
+  
+  f1Mobs[5] mobInfo
+  f2Mobs[5] mobInfo
+  f3Mobs[1] mobInfo
+
+  floor int = 1
+  chamber int = 1
+  gameOver bool
+  playerNum int
+  
+  classDesc[2] string = [2]string{"He wields an arsenal of powerful strikes, boasts formidable defensive options, and draws\nfiendish strength from his demonic benefactors to empower himself in various ways.\nHe starts with 80 hp, highest of the playable characters", "She is a huntress themed on a rogue fantasy build. This cunning character weakens her foes with numerous cuts.\nwhile using cheap tricks and agility to avoid their attacks.\nThe Silent ensures that she will always be one step ahead of her enemy.\nShe starts with a relatively low 70 hp."}
+
+  inputNum int
+
+  turn int = 0
+
+  // my own custom "uniScanner" stuff
+  choiceString string
+  choiceInt int
+)
+
+type playerInfo struct {
+  name string // max length 16 char
+  char string
+  
+  maxhp int
+  hp int
+  block int
+  gold int
+  ap int
+
+  damageDealCard int
+  damageGainCard int
+  
+  deck[] cardInfo
+  hand[] cardInfo
+  drawPile[] cardInfo
+  discardPile[] cardInfo
+  
+  currentStatus[] buff
+}
+type cardInfo struct {
+  name string
+  desc string
+  ap int
+  
+  cardtype string
+  cardrarity string
+  
+  damage int
+  block int
+  
+  innate bool
+  exhaust bool
+  discard bool
+  disNum int
+  
+  apply bool
+  buffs buff
+  debuff buff
+}
+
+type mobInfo struct {
+  name string
+  maxhp int
+  hp int
+
+  currentStatus[] buff
+
+  damageDeal int
+  defenceGain int
+  defence int
+  
+  intent intentInfo
+}
+type intentInfo struct {
+  agro bool
+  def bool
+  buff bool
+  debuff bool
+
+  damage[] int
+  block[] int
+  buffApply buff
+  debuffApply buff
+  
+  buffs[] buff
+  debuffs[] buff
+
+  displayIntent string
+  
+  possess[9] intentOwn
+}
+type intentOwn struct {
+  name string
+  own bool
+}
+type buff struct {
+  name string
+  
+  intensity bool
+  stacks int
+}
+// Array with Aggressive, Defensive, Buff, Debuff
+// have enemies run an RNG for the below Intents IF: they have them set as TRUE in the array
+/* Intents :
+  - Aggressive (intends to attack)
+  - Defensive (intends to defend)
+  - Strategic Debuff (intends to inflict debuff)
+  - Strategic Buff (intends to use a buff)
+  - Aggressive Debuff (intends to attack and inflict debuff)
+  - Aggressive Buff (intends to attack and use a buff)
+  - Aggressive Defense (inteds to attack and defend)
+  - Defensive Buff (inteds to defend and buff)
+  - Defensive Debuff (intends to defend and inflict a debuff)
+
+*/
+
+var (
+  vulnerable buff = buff{"Vulnerable", false, 0}
+  weak buff = buff{"Weak", false, 0}
+  strength buff = buff{"Strength", true, 0}
+  dexterity buff = buff{"Dexterity", true, 0}
+  frail buff = buff{"Frail", false, 0}
+)
+func mobInitialize() {
+  
+  //floor 1 mobs
+  //Jaw Worm
+  f1Mobs[0].name = "Jaw Worm"
+  f1Mobs[0].maxhp = 40
+  f1Mobs[0].hp = f1Mobs[0].maxhp
+  f1Mobs[0].intent.damage = append(f1Mobs[0].intent.damage, 4, 7, 11)
+  f1Mobs[0].intent.block = append(f1Mobs[0].intent.block, 5, 6)
+  f1Mobs[0].intent.possess[0] = intentOwn{"Aggressive", true}
+  f1Mobs[0].intent.possess[1] = intentOwn{"Defensive", false}
+  f1Mobs[0].intent.possess[2] = intentOwn{"Strategic Buff", false}
+  f1Mobs[0].intent.possess[3] = intentOwn{"Strategic Debuff", false}
+  f1Mobs[0].intent.possess[4] = intentOwn{"Aggressive Buff", false}
+  f1Mobs[0].intent.possess[5] = intentOwn{"Aggressive Debuff", false}
+  f1Mobs[0].intent.possess[6] = intentOwn{"Defensive Buff", true}
+  f1Mobs[0].intent.possess[7] = intentOwn{"Defensive Debuff", false}
+  f1Mobs[0].intent.possess[8] = intentOwn{"Aggressive Defense", true}
+  f1Mobs[0].intent.buffs = append(f1Mobs[0].intent.buffs, buff{"Strength", true, 2})
+
+  //Rabbid Dog
+  f1Mobs[1].name = "Mad Dog"
+  f1Mobs[1].maxhp = 35
+  f1Mobs[1].hp = f1Mobs[1].maxhp
+  f1Mobs[1].intent.damage = append(f1Mobs[1].intent.damage, 2, 4, 7)
+  f1Mobs[1].intent.block = append(f1Mobs[1].intent.block, 2, 4)
+  f1Mobs[1].intent.possess[0] = intentOwn{"Aggressive", true}
+  f1Mobs[1].intent.possess[1] = intentOwn{"Defensive", false}
+  f1Mobs[1].intent.possess[2] = intentOwn{"Strategic Buff", false}
+  f1Mobs[1].intent.possess[3] = intentOwn{"Strategic Debuff", false}
+  f1Mobs[1].intent.possess[4] = intentOwn{"Aggressive Buff", false}
+  f1Mobs[1].intent.possess[5] = intentOwn{"Aggressive Debuff", false}
+  f1Mobs[1].intent.possess[6] = intentOwn{"Defensive Buff", false}
+  f1Mobs[1].intent.possess[7] = intentOwn{"Defensive Debuff", false}
+  f1Mobs[1].intent.possess[8] = intentOwn{"Aggressive Defense", true}
+  //Drifter
+  f1Mobs[2].name = "Drifter"
+  f1Mobs[2].maxhp = 64
+  f1Mobs[2].hp = f1Mobs[2].maxhp
+  f1Mobs[2].intent.damage = append(f1Mobs[2].intent.damage, 2, 10, 11, 0)
+  f1Mobs[2].intent.block = append(f1Mobs[2].intent.block, 4, 7)
+  f1Mobs[2].intent.possess[0] = intentOwn{"Aggressive", true}
+  f1Mobs[2].intent.possess[1] = intentOwn{"Defensive", false}
+  f1Mobs[2].intent.possess[2] = intentOwn{"Strategic Buff", false}
+  f1Mobs[2].intent.possess[3] = intentOwn{"Strategic Debuff", false}
+  f1Mobs[2].intent.possess[4] = intentOwn{"Aggressive Buff", false}
+  f1Mobs[2].intent.possess[5] = intentOwn{"Aggressive Debuff", false}
+  f1Mobs[2].intent.possess[6] = intentOwn{"Defensive Buff", false}
+  f1Mobs[2].intent.possess[7] = intentOwn{"Defensive Debuff", false}
+  f1Mobs[2].intent.possess[8] = intentOwn{"Aggressive Defense", true}
+  // f1Mobs[2].intent.debuffs = append(f1Mobs[2].intent.debuffs, vulnerable, dexterity)
+  // f1Mobs[2].intent.debuffs[0].stacks = 2
+  // f1Mobs[2].intent.debuffs[1].stacks = -1
+
+  // Acidic Blob
+  f1Mobs[3].name = "Acidic Blob"
+  f1Mobs[3].maxhp = 70
+  f1Mobs[3].hp = f1Mobs[3].maxhp
+  f1Mobs[3].intent.damage = append(f1Mobs[3].intent.damage, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 0, 0, 0, 0)
+  f1Mobs[3].intent.block = append(f1Mobs[3].intent.block, 1, 5, 7)
+  f1Mobs[3].intent.possess[0] = intentOwn{"Aggressive", true}
+  f1Mobs[3].intent.possess[1] = intentOwn{"Defensive", true}
+  f1Mobs[3].intent.possess[2] = intentOwn{"Strategic Buff", true}
+  f1Mobs[3].intent.possess[3] = intentOwn{"Strategic Debuff", true}
+  f1Mobs[3].intent.possess[4] = intentOwn{"Aggressive Buff", false}
+  f1Mobs[3].intent.possess[5] = intentOwn{"Aggressive Debuff", true}
+  f1Mobs[3].intent.possess[6] = intentOwn{"Defensive Buff", false}
+  f1Mobs[3].intent.possess[7] = intentOwn{"Defensive Debuff", false}
+  f1Mobs[3].intent.possess[8] = intentOwn{"Aggressive Defense", false}
+  f1Mobs[3].intent.buffs = append(f1Mobs[3].intent.buffs, strength)
+  f1Mobs[3].intent.buffs[0].stacks = 1
+  f1Mobs[3].intent.debuffs = append(f1Mobs[3].intent.debuffs, vulnerable, dexterity, frail)
+  f1Mobs[3].intent.debuffs[0].stacks = 2
+  f1Mobs[3].intent.debuffs[1].stacks = -1
+  f1Mobs[3].intent.debuffs[2].stacks = 1
+
+  // Sticky Arachnid
+  f1Mobs[4].name = "Sticky Arachnid"
+  f1Mobs[4].maxhp = 30
+  f1Mobs[4].hp = f1Mobs[4].maxhp
+  f1Mobs[4].intent.damage = append(f1Mobs[4].intent.damage, 5, 6, 7)
+  f1Mobs[4].intent.block = append(f1Mobs[4].intent.block, 2, 5, 10, 11)
+  f1Mobs[4].intent.possess[0] = intentOwn{"Aggressive", true}
+  f1Mobs[4].intent.possess[1] = intentOwn{"Defensive", false}
+  f1Mobs[4].intent.possess[2] = intentOwn{"Strategic Buff", false}
+  f1Mobs[4].intent.possess[3] = intentOwn{"Strategic Debuff", true}
+  f1Mobs[4].intent.possess[4] = intentOwn{"Aggressive Buff", false}
+  f1Mobs[4].intent.possess[5] = intentOwn{"Aggressive Debuff", true}
+  f1Mobs[4].intent.possess[6] = intentOwn{"Defensive Buff", false}
+  f1Mobs[4].intent.possess[7] = intentOwn{"Defensive Debuff", true}
+  f1Mobs[4].intent.possess[8] = intentOwn{"Aggressive Defense", false}
+  f1Mobs[4].intent.buffs = append(f1Mobs[0].intent.buffs, strength)
+  f1Mobs[4].intent.buffs[0].stacks = 1
+  f1Mobs[4].intent.debuffs = append(f1Mobs[0].intent.debuffs, vulnerable, dexterity)
+  f1Mobs[4].intent.debuffs[0].stacks = 2
+  f1Mobs[4].intent.debuffs[1].stacks = -1
+
+  //floor 2 mob
+  // Sticky Arachnid
+  f2Mobs[0].name = "Zombie"
+  f2Mobs[0].maxhp = 60
+  f2Mobs[0].hp = f2Mobs[0].maxhp
+  f2Mobs[0].intent.damage = append(f2Mobs[0].intent.damage, 1, 1, 3, 5, 6, 6, 6, 9, 10, 10)
+  f2Mobs[0].intent.block = append(f2Mobs[0].intent.block, 0, 0)
+  f2Mobs[0].intent.possess[0] = intentOwn{"Aggressive", true}
+  f2Mobs[0].intent.possess[1] = intentOwn{"Defensive", false}
+  f2Mobs[0].intent.possess[2] = intentOwn{"Strategic Buff", false}
+  f2Mobs[0].intent.possess[3] = intentOwn{"Strategic Debuff", false}
+  f2Mobs[0].intent.possess[4] = intentOwn{"Aggressive Buff", false}
+  f2Mobs[0].intent.possess[5] = intentOwn{"Aggressive Debuff", false}
+  f2Mobs[0].intent.possess[6] = intentOwn{"Defensive Buff", false}
+  f2Mobs[0].intent.possess[7] = intentOwn{"Defensive Debuff", false}
+  f2Mobs[0].intent.possess[8] = intentOwn{"Aggressive Defense", false}
+
+  // ????
+  f2Mobs[1].name = "????"
+  f2Mobs[1].maxhp = 100
+  f2Mobs[1].hp = f2Mobs[1].maxhp
+  f2Mobs[1].intent.damage = append(f2Mobs[1].intent.damage, 10, 10)
+  f2Mobs[1].intent.block = append(f2Mobs[1].intent.block, 10, 10)
+  f2Mobs[1].intent.possess[0] = intentOwn{"Aggressive", true}
+  f2Mobs[1].intent.possess[1] = intentOwn{"Defensive", true}
+  f2Mobs[1].intent.possess[2] = intentOwn{"Strategic Buff", true}
+  f2Mobs[1].intent.possess[3] = intentOwn{"Strategic Debuff", true}
+  f2Mobs[1].intent.possess[4] = intentOwn{"Aggressive Buff", true}
+  f2Mobs[1].intent.possess[5] = intentOwn{"Aggressive Debuff", true}
+  f2Mobs[1].intent.possess[6] = intentOwn{"Defensive Buff", true}
+  f2Mobs[1].intent.possess[7] = intentOwn{"Defensive Debuff", true}
+  f2Mobs[1].intent.possess[8] = intentOwn{"Aggressive Defense", true}
+  f2Mobs[1].intent.buffs = append(f2Mobs[1].intent.buffs, strength)
+  f2Mobs[1].intent.buffs[0].stacks = 1
+  f2Mobs[1].intent.debuffs = append(f2Mobs[1].intent.debuffs, vulnerable, dexterity, strength)
+  f2Mobs[1].intent.debuffs[0].stacks = 2
+  f2Mobs[1].intent.debuffs[1].stacks = -1
+  f2Mobs[1].intent.debuffs[2].stacks = -1
+
+  //  I'm tired of creating monsters
+  f2Mobs[2].name = "Procrastintion"
+  f2Mobs[2].maxhp = 100
+  f2Mobs[2].hp = f2Mobs[2].maxhp
+  f2Mobs[2].intent.damage = append(f2Mobs[2].intent.damage, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+  f2Mobs[2].intent.block = append(f2Mobs[2].intent.block, 50, 0, 0 ,0 ,0 ,0 ,0 ,0 , 0, 0)
+  f2Mobs[2].intent.possess[0] = intentOwn{"Aggressive", true}
+  f2Mobs[2].intent.possess[1] = intentOwn{"Defensive", true}
+  f2Mobs[2].intent.possess[2] = intentOwn{"Strategic Buff", false}
+  f2Mobs[2].intent.possess[3] = intentOwn{"Strategic Debuff", false}
+  f2Mobs[2].intent.possess[4] = intentOwn{"Aggressive Buff", false}
+  f2Mobs[2].intent.possess[5] = intentOwn{"Aggressive Debuff", false}
+  f2Mobs[2].intent.possess[6] = intentOwn{"Defensive Buff", false}
+  f2Mobs[2].intent.possess[7] = intentOwn{"Defensive Debuff", false}
+  f2Mobs[2].intent.possess[8] = intentOwn{"Aggressive Defense", true}
+
+  // blah
+  f2Mobs[3].name = "Blah"
+  f2Mobs[3].maxhp = 50
+  f2Mobs[3].hp = f2Mobs[3].maxhp
+  f2Mobs[3].intent.damage = append(f2Mobs[3].intent.damage, 4, 4, 4, 11, 15)
+  f2Mobs[3].intent.block = append(f2Mobs[3].intent.block, 10, 10)
+  f2Mobs[3].intent.possess[0] = intentOwn{"Aggressive", true}
+  f2Mobs[3].intent.possess[1] = intentOwn{"Defensive",  false}
+  f2Mobs[3].intent.possess[2] = intentOwn{"Strategic Buff", false}
+  f2Mobs[3].intent.possess[3] = intentOwn{"Strategic Debuff", true}
+  f2Mobs[3].intent.possess[4] = intentOwn{"Aggressive Buff", false}
+  f2Mobs[3].intent.possess[5] = intentOwn{"Aggressive Debuff", true}
+  f2Mobs[3].intent.possess[6] = intentOwn{"Defensive Buff", true}
+  f2Mobs[3].intent.possess[7] = intentOwn{"Defensive Debuff", false}
+  f2Mobs[3].intent.possess[8] = intentOwn{"Aggressive Defense", false}
+  f2Mobs[3].intent.buffs = append(f2Mobs[3].intent.buffs, strength)
+  f2Mobs[3].intent.buffs[0].stacks = 1
+  f2Mobs[3].intent.debuffs = append(f2Mobs[3].intent.debuffs, weak)
+  f2Mobs[3].intent.debuffs[0].stacks = 2
+
+  // WWhat did I just create?
+  f2Mobs[4].name = "Life"
+  f2Mobs[4].maxhp = 10
+  f2Mobs[4].hp = f2Mobs[4].maxhp
+  f2Mobs[4].intent.damage = append(f2Mobs[4].intent.damage, -3 , -2, -1, 0, 4, 5)
+  f2Mobs[4].intent.block = append(f2Mobs[4].intent.block, 10, 10)
+  f2Mobs[4].intent.possess[0] = intentOwn{"Aggressive", true}
+  f2Mobs[4].intent.possess[1] = intentOwn{"Defensive",  false}
+  f2Mobs[4].intent.possess[2] = intentOwn{"Strategic Buff", false}
+  f2Mobs[4].intent.possess[3] = intentOwn{"Strategic Debuff", false}
+  f2Mobs[4].intent.possess[4] = intentOwn{"Aggressive Buff", false}
+  f2Mobs[4].intent.possess[5] = intentOwn{"Aggressive Debuff", false}
+  f2Mobs[4].intent.possess[6] = intentOwn{"Defensive Buff", false}
+  f2Mobs[4].intent.possess[7] = intentOwn{"Defensive Debuff", false}
+  f2Mobs[4].intent.possess[8] = intentOwn{"Aggressive Defense", false}
+
+  // The Programmer
+  f3Mobs[0].name = "THE PROGRAMMER"
+  f3Mobs[0].maxhp = 1000
+  f3Mobs[0].hp = f3Mobs[0].maxhp
+  f3Mobs[0].intent.damage = append(f3Mobs[0].intent.damage, 100, 100)
+  f3Mobs[0].intent.block = append(f3Mobs[0].intent.block, 100, 100)
+  f3Mobs[0].intent.possess[0] = intentOwn{"Aggressive", false}
+  f3Mobs[0].intent.possess[1] = intentOwn{"Defensive",  false}
+  f3Mobs[0].intent.possess[2] = intentOwn{"Strategic Buff", false}
+  f3Mobs[0].intent.possess[3] = intentOwn{"Strategic Debuff", false}
+  f3Mobs[0].intent.possess[4] = intentOwn{"Aggressive Buff", false}
+  f3Mobs[0].intent.possess[5] = intentOwn{"Aggressive Debuff", false}
+  f3Mobs[0].intent.possess[6] = intentOwn{"Defensive Buff", false}
+  f3Mobs[0].intent.possess[7] = intentOwn{"Defensive Debuff", false}
+  f3Mobs[0].intent.possess[8] = intentOwn{"Aggressive Defense", false}
+
+}
+
+func cardInitialize() {
+  // Starter Cards
+  //IronClad
+  //strike
+  // template
+  // starterCardsSilent[3].name = "Survivor"
+  // starterCardsSilent[3].desc = "Deal 3 damage.\nApply 1 Weak"
+  // starterCardsSilent[3].ap = 1
+  // starterCardsSilent[3].cardtype = "Skill"
+  // starterCardsSilent[3].cardrarity = "common"
+  // starterCardsSilent[3].innate = false
+  // starterCardsSilent[3].exhaust = false
+  // starterCardsSilent[3].discard = true
+  // starterCardsSilent[3].disNum = 1
+  // starterCardsSilent[3].apply = true
+  // starterCardsSilent[3].buffs = weak
+  // starterCardsSilent[3].buffs.stacks = 1
+  
+  starterCardsIron[0].name = "Strike"
+  starterCardsIron[0].desc = "Deal 6 Damage"
+  starterCardsIron[0].ap = 1
+  starterCardsIron[0].cardtype = "Attack"
+  starterCardsIron[0].cardrarity = "common"
+  starterCardsIron[0].damage = 6
+
+  //defend
+  starterCardsIron[1].name = "Defend"
+  starterCardsIron[1].desc = "Gain 5 Block"
+  starterCardsIron[1].ap = 1
+  starterCardsIron[1].cardtype = "Skill"
+  starterCardsIron[1].cardrarity = "common"
+  starterCardsIron[1].block = 5
+
+  //bash
+  starterCardsIron[2].name = "Bash"
+  starterCardsIron[2].desc = "Deal 8 damage. Apply 2 Vulnerable"
+  starterCardsIron[2].ap = 2
+  starterCardsIron[2].cardtype = "Attack"
+  starterCardsIron[2].cardrarity = "common"
+  starterCardsIron[2].damage = 8
+  starterCardsIron[2].apply = true
+  starterCardsIron[2].debuff = vulnerable
+  starterCardsIron[2].debuff.stacks = 2
+  
+
+  //Silent
+  //strike
+  starterCardsSilent[0] = starterCardsIron[0]
+  starterCardsSilent[1] = starterCardsIron[1]
+
+  //nuetralize
+  starterCardsSilent[2].name = "Neutralize"
+  starterCardsSilent[2].desc = "Deal 3 damage. Apply 1 Weak"
+  starterCardsSilent[2].ap = 0
+  starterCardsSilent[2].cardtype = "Attack"
+  starterCardsSilent[2].cardrarity = "common"
+  starterCardsSilent[2].damage = 3
+  starterCardsSilent[2].apply = true
+  starterCardsSilent[2].debuff = weak
+  starterCardsSilent[2].debuff.stacks = 1
+
+  //survivor
+  starterCardsSilent[3].name = "Survivor"
+  starterCardsSilent[3].desc = "Gain 8 block."
+  starterCardsSilent[3].ap = 1
+  starterCardsSilent[3].cardtype = "Skill"
+  starterCardsSilent[3].cardrarity = "common"
+  starterCardsSilent[3].block = 8
+  
+  //
+  // actual cards
+  //
+
+  //ironClad
+  //power strike
+  commonCardsIron[0].name = "Power Strike"
+  commonCardsIron[0].desc = "Deal 10 Damage"
+  commonCardsIron[0].ap = 1
+  commonCardsIron[0].cardtype = "Attack"
+  commonCardsIron[0].cardrarity = "common"
+  commonCardsIron[0].damage = 10
+
+  //power move
+  commonCardsIron[1].name = "Power Move"
+  commonCardsIron[1].desc = "Gain 3 Strength"
+  commonCardsIron[1].ap = 2
+  commonCardsIron[1].cardtype = "Skill"
+  commonCardsIron[1].cardrarity = "common"
+  commonCardsIron[1].apply = true
+  commonCardsIron[1].buffs = strength
+  commonCardsIron[1].buffs.stacks = 3
+
+  //power defend (damn that's a lot of power)
+  commonCardsIron[2].name = "Power Defend"
+  commonCardsIron[2].desc = "Gain 12 block"
+  commonCardsIron[2].ap = 1
+  commonCardsIron[2].cardtype = "Skill"
+  commonCardsIron[2].cardrarity = "common"
+  commonCardsIron[2].block = 12
+
+  // ?d??dwawd??
+  commonCardsIron[3].name = "Is That Allowed?"
+  commonCardsIron[3].desc = "Double your next attack"
+  commonCardsIron[3].ap = 3
+  commonCardsIron[3].cardtype = "Skill"
+  commonCardsIron[3].cardrarity = "common"
+
+  // Blood Ritual
+  commonCardsIron[4].name = "Blood Ritual"
+  commonCardsIron[4].desc = "Deal 60 damage, but take 30"
+  commonCardsIron[4].ap = 1
+  commonCardsIron[4].cardtype = "Attack"
+  commonCardsIron[4].cardrarity = "common"
+  commonCardsIron[4].damage = 60
+
+  //
+  // Silent
+  //
+
+  //quick attack
+  commonCardsIron[0].name = "Quick Attack"
+  commonCardsIron[0].desc = "Deal 5 Damage"
+  commonCardsIron[0].ap = 0
+  commonCardsIron[0].cardtype = "Attack"
+  commonCardsIron[0].cardrarity = "common"
+  commonCardsIron[0].damage = 5
+
+  //You're done
+  commonCardsIron[1].name = "Quick Move"
+  commonCardsIron[1].desc = "Gain 1 Strength"
+  commonCardsIron[1].ap = 0
+  commonCardsIron[1].cardtype = "Skill"
+  commonCardsIron[1].cardrarity = "common"
+  commonCardsIron[1].apply = true
+  commonCardsIron[1].buffs = strength
+  commonCardsIron[1].buffs.stacks = 1
+
+  //You're done
+  commonCardsIron[2].name = "You're Done"
+  commonCardsIron[2].desc = "Apply -5 strength"
+  commonCardsIron[2].ap = 2
+  commonCardsIron[2].cardtype = "Skill"
+  commonCardsIron[2].cardrarity = "common"
+  commonCardsIron[2].apply = true
+  commonCardsIron[2].debuff = strength
+  commonCardsIron[2].debuff.stacks = -5
+
+  // help me
+  commonCardsIron[3].name = "Help me"
+  commonCardsIron[3].desc = "Draw one card"
+  commonCardsIron[3].ap = 1
+  commonCardsIron[3].cardtype = "Skill"
+  commonCardsIron[3].cardrarity = "common"
+
+  // Big boig damage
+  commonCardsIron[4].name = "Beeeg Damage"
+  commonCardsIron[4].desc = "Apply 50 Vulnerable"
+  commonCardsIron[4].ap = 1
+  commonCardsIron[4].cardtype = "Skill"
+  commonCardsIron[4].cardrarity = "common"
+  commonCardsIron[4].apply = true
+  commonCardsIron[2].debuff = vulnerable
+  commonCardsIron[2].debuff.stacks = 50
+  
+}
+
+func main() {
+  cardInitialize()
+  mobInitialize()
+  p(clr)
+  pf("%vSingle player or Co-op?%v\n[1] Single\n[2] Co-op\n", grBold, grReset)
+  for playerNum < 1 || playerNum > 2 {
+    uniScanner()
+    playerNum = choiceInt
+  }
+  playerInfoGrab(playerNum)
+  p(clr)
+  enemyEncounter()
+}
+
+func playerInfoGrab(players int) {
+  for x := 0; x < players; x++ {
+    p(clr)
+    pf("Player %v, please input your Username (max char 16)\n\n", x+1)
+    for len(player[x].name) == 0 || len(player[x].name) > 16 {
+      p(">\033[H\033[2B\033[3G")
+      player[x].name = scanString()
+      p("\033[1A\033[2K")
+    }
+    classGrab(x)
+  } 
+}
+func classGrab(x int) {
+  p(clr)
+  inputNum = 0
+  op := 0
+  pf("Choose a Class:\n\n[1] %vIronclad%v\n[2] %vSilent%v\n\n\n", red, grReset, green, grReset )
+  op = upTo_int(1, 2)
+  p("\033[1A\033[2K")
+  p(classDesc[op-1])
+  pf("\n\n%vAre you sure you wish to select this character?%v\n[1] Yes\n[2] No\n", grBold, grReset)
+  inputNum = upTo_int(1, 2)
+  switch inputNum {
+    case 1:
+    switch op {
+      case 1:
+      player[x].char = (grItalic + "Ironclad" + grReset)
+      player[x].maxhp = 80
+      for y := 0; y < 5; y++ {
+        player[x].deck = append(player[x].deck, starterCardsIron[0])  
+      }
+      for y := 0; y < 4; y++ {
+        player[x].deck = append(player[x].deck, starterCardsIron[1])  
+      }
+      player[x].deck = append(player[x].deck, starterCardsIron[2])  
+      case 2:
+      player[x].char = (grItalic + "Silent" + grReset)
+      player[x].maxhp = 70
+      for y := 0; y < 5; y++ {
+        player[x].deck = append(player[x].deck, starterCardsSilent[0])  
+      }
+      for y := 0; y < 5; y++ {
+        player[x].deck = append(player[x].deck, starterCardsSilent[1])
+      }
+      player[x].deck = append(player[x].deck, starterCardsSilent[2])
+      player[x].deck = append(player[x].deck, starterCardsSilent[3])
+    }
+    case 2:
+    classGrab(x)
+  }
+  player[x].hp = player[x].maxhp
+  player[x].gold = 99
+  player[x].ap = 3
+}
+
+func scanString()string {
+  scanner := bufio.NewScanner(os.Stdin)
+  scanner.Scan()
+  input := scanner.Text()
+  return input
+}
+func upTo_int(start int, end int)int {
+  scanner := bufio.NewScanner(os.Stdin)
+  var store int
+  for store < start || store > end {
+    scanner.Scan()
+    input, _ := strconv.Atoi(scanner.Text())
+    p("\033[1A\033[2K")
+    store = input
+  }
+  return store
+}
+//UTILITY DISPLAY
+func utilDisplay() {
+  pf("\033[H%v%v%v\033[H\033[16G %v%v%v        %v/%v      Gold: %v      Floor: %v\n", grBold, strings.ToUpper(player[turn].name), grReset, grItalic, player[turn].char, grReset, player[turn].hp, player[turn].maxhp, player[turn].gold, floor)
+  pl("_________________________________________________________________________")
+}
+//COMBAT UI DISPLAY
+func combatUI(enemy mobInfo) {
+  p(clr)
+  utilDisplay()
+  p("\033[40C")
+  for x := 0; x < 10; x++ {
+    p("|\033[1B\033[1D")
+  }
+  // enemy intent display
+  if enemy.intent.agro == true {
+  pf("\033[H\033[4B\033[21G%v%v|%v|%v", grBold, red, enemy.damageDeal, grReset)
+  }
+  pf("\033[H\033[4B\033[25G%v%v%v\n", grItalic, enemy.intent.displayIntent, grReset)
+  
+  // entity name display
+  pf("\033[5G%v%v%v", grBold, player[0].name, grReset)
+  pf(begLine + "\033[25G%v%v%v\n", red, enemy.name, grReset)
+  //entity block display
+  pf("\033[1G%v%v|%v|%v", grBold, blue, player[0].block, grReset)
+  pf("\033[21G%v%v|%v|%v", grBold, blue, enemy.defence, grReset)
+  // entity hp display
+  pf("\033[5G%v%v / %v%v", green, player[0].hp, player[turn].maxhp, grReset)
+  pf("\033[25G%v%v / %v%v", green, enemy.hp, enemy.maxhp, grReset)
+
+  //player 2 display
+  if playerNum == 2 {
+    p("\033[H\033[8B")
+    pf("\033[5G%v%v%v", grBold, player[1].name, grReset)
+    pf(begLine + "\033[1G%v%v|%v|%v", grBold, blue, player[1].block, grReset)
+    pf("\033[5G%v%v%v\n", grBold, player[1].name, grReset)
+    pf("\033[5G%v%v / %v%v", green, player[1].hp, player[1].maxhp, grReset)
+  }
+  p("\033[H\033[12B")
+  pl("_________________________________________________________________________")
+}
+//combat end screen
+func combatEnd(){
+  p(clr)
+  // floor++
+  // if player[turn].hp <= 0 {
+  //   p("%vYOU LOSE%v")
+  // } else {
+  //   gold := (rand.Intn(15) + 15)
+  //   player[turn].gold += gold
+  //   utilDisplay()
+  //   pf("\nCongratulations, YOU WON!  !\nYou have recieved: %v Gold\n", gold)
+  //   if floor == 4 || floor == 8 || floor == 12 {
+  //     chamber++
+  //   }
+  //   player[turn].hand = []cardInfo{}
+  //   switch player[turn].char{
+  //     case "Ironclad" :
+  //     for x := 0; x < 5; x++ {
+  //       rand.Seed(time.Now().UnixNano())
+  //       player[turn].hand = append(player[turn].hand, commonCardsIron[(rand.Intn(5))])
+  //     }
+  //     case  "Silent" :
+  //     for x := 0; x < 5; x++ {
+  //       rand.Seed(time.Now().UnixNano())
+  //       player[turn].hand = append(player[turn].hand, commonCardsSilent[(rand.Intn(5))])
+  //     }
+  //   }
+  //   handDisplay()
+  //   player[turn].hand = append(player[turn].hand, )
+  // }
+}
+// HAND DISPLAY
+func handDisplay() {
+  p("\033[H\033[14B")
+  for x := 0; x < 6; x++ {
+    pf("\033[0K\033[1B")
+  }
+  pf("\033[H\033[14BAP: %v%v%v", yellow, player[turn].ap, grReset)
+  p(begLine + "\033[1B")
+  pf("DRAW PILE: (%v)                        DISCARD PILE: (%v)\n", len(player[turn].drawPile), len(player[turn].discardPile))
+  cardPlacement := 5
+  cardNum := 1
+  for x := 0; x < len(player[turn].hand); x++ {
+    pf("\033[%vG%v|%v|%v%v", cardPlacement, cardNum, grBold, player[turn].hand[x].name, grReset)
+    cardPlacement += 12
+    cardNum++
+    if x > 3 {
+      break
+    }
+  }
+  p("\033[H\033[18B")
+  cardPlacement = 5
+  if len(player[turn].hand) > 5 {
+    for x := cardNum-1; x < len(player[turn].hand); x++ {
+      pf("\033[%vG%v|%v|%v%v", cardPlacement, cardNum, grBold, player[turn].hand[x].name, grReset)
+      cardPlacement += 12
+      cardNum++
+      if cardNum == 11 {
+        break
+      }
+    }
+  }
+  p("\n")
+}
+//SIDE DISPLAY RESET
+func sideDisplayReset() {
+  p("\033[H\033[2B\033[41C")
+  for x := 0; x < 10; x++ {
+    p("\033[0K\033[1B")
+  }
+}
+//CARD DISPLAY
+func cardDisplay(card cardInfo) {
+  sideDisplayReset()
+  pf("\033[H\033[2B\033[43C%v%v%v%v  %v%v%v", grBold, yellow, card.ap, grReset, grBold, card.name, grReset)
+  pf("\033[H\033[2B\033[43C\033[2B%v", card.desc)
+}
+//PLAYER STATUS
+func playerStatusDisplay(user int) {
+  sideDisplayReset()
+  pf("\033[H\033[2B\033[42C%vPLAYER STATUS:%v      STACKS:", grBold, grReset)
+  if len(player[user].currentStatus) != 0 {
+    p("\033[H\033[3B")
+    for x := 0; x < len(player[user].currentStatus); x++ {
+      pf("\033[42C%v\033[8C-\033[5C%v", player[user].currentStatus[x].name, player[user].currentStatus[x].stacks)
+      p("\033[1B")
+    }
+  }
+}
+// ENEMY STATUS
+func enemyStatusDisplay(enemy mobInfo) {
+  sideDisplayReset()
+  pf("\033[H\033[2B\033[42C%vENEMY STATUS:%v      STACKS:", red, grReset)
+  if len(enemy.currentStatus) != 0 {
+    p("\033[H\033[3B\033[42C")
+    for x := 0; x < len(enemy.currentStatus); x++ {
+      pf("%v\033[7C-\033[5C%v\033[42G\033[1B", enemy.currentStatus[x].name, enemy.currentStatus[x].stacks)
+    }
+  }
+}
+func enemyEncounter() {
+  var cardUse int
+  player[turn].drawPile = player[turn].deck
+  turn = 0
+  var mob mobInfo
+  rand.Seed(time.Now().UnixNano())
+  switch chamber {
+    case 1:
+    mob = f1Mobs[rand.Intn(5)]
+    case 2:
+    mob = f2Mobs[rand.Intn(5)]
+    case 3:
+    mob = f3Mobs[0]
+  }
+  // mob = f1Mobs[2]
+  for {
+    if mob.name == f3Mobs[0].name {
+    break
+    }
+    player[turn].ap = 3
+    
+    // executing mob intent
+    if mob.intent.agro == true {
+      mob.damageDeal -= player[turn].block
+      if mob.damageDeal >= 0 {
+        player[turn].block = 0
+      } else {
+        player[turn].block = (mob.damageDeal * -1)
+        mob.damageDeal = 0
+      }
+      player[turn].hp -= mob.damageDeal
+    }
+    if mob.intent.def == true {
+      mob.defence = mob.defenceGain
+    }
+    if mob.intent.buff == true {
+      
+    }
+    //resetting actions values
+    mob.intent.agro = false
+    mob.intent.def = false
+    mob.intent.buff = false
+    mob.intent.debuff = false
+
+    mob.damageDeal = 0
+    mob.defenceGain = 0
+
+    player[turn].block = 0
+
+    var possibleIntent[] string
+    
+    // generating display intent / mob intent
+    for x := 0; x < 9; x++ {
+      if mob.intent.possess[x].own == true {
+        possibleIntent = append(possibleIntent, mob.intent.possess[x].name)
+      }
+    }
+    rand.Seed(time.Now().UnixNano())
+    intentRNG := rand.Intn(len(possibleIntent))
+    mobIntent := mob.intent.possess[intentRNG].name
+    mob.intent.displayIntent = mobIntent
+    
+    //setting action values
+    if mob.intent.displayIntent == "Aggressive" {
+      mob.intent.agro = true
+    }
+    if mob.intent.displayIntent == "Defensive" {
+      mob.intent.def = true
+    }
+    if mob.intent.displayIntent == "Strategic Buff" {
+      mob.intent.buff = true
+    }
+    if mob.intent.displayIntent == "Strategic Debuff" {
+      mob.intent.debuff = true
+    }
+    if mob.intent.displayIntent == "Aggressive Buff" {
+      mob.intent.agro = true
+      mob.intent.buff = true
+    }
+    if mob.intent.displayIntent == "Aggressive Debuff" {
+      mob.intent.agro = true
+      mob.intent.debuff = true
+    }
+    if mob.intent.displayIntent == "Defensive Buff" {
+      mob.intent.def = true
+      mob.intent.buff = true
+    }
+    if mob.intent.displayIntent == "Defensive Debuff" {
+      mob.intent.def = true
+      mob.intent.debuff = true
+    }
+    if mob.intent.displayIntent == "Aggressive Defense" {
+      mob.intent.agro = true
+      mob.intent.def = true
+    }
+
+    // generating damage/defend values for enemyEncounter
+    if mob.intent.agro == true {
+      rand.Seed(time.Now().UnixNano())
+      mob.damageDeal = mob.intent.damage[rand.Intn(len(mob.intent.damage))]
+    } //agro check end
+    if mob.intent.def == true {
+      rand.Seed(time.Now().UnixNano())
+      mob.defenceGain = mob.intent.block[rand.Intn(len(mob.intent.block))]
+    } //def check end
+    //checking/applying enemy buffs/debuffs
+    if mob.intent.buff == true {
+      rand.Seed(time.Now().UnixNano())
+      tempStatus := mob.intent.buffs[rand.Intn(len(mob.intent.buffs))]
+      //checking if status is already applied
+      if len(mob.currentStatus) == 0 {
+        mob.currentStatus = append(mob.currentStatus, tempStatus)
+      } else {
+        for x := 0; x < len(mob.currentStatus); x++ {
+          if tempStatus.name == mob.currentStatus[x].name {
+            mob.currentStatus[x].stacks += tempStatus.stacks
+          }
+        }
+      }
+    } //buff check end
+    if mob.intent.debuff == true {
+      rand.Seed(time.Now().UnixNano())
+      tempStatus := mob.intent.debuffs[rand.Intn(len(mob.intent.debuffs))]
+      //  cheking if status is already applied
+      if len(player[turn].currentStatus) == 0 {
+        player[turn].currentStatus = append(player[turn].currentStatus, tempStatus)
+      } else {
+        for x := 0; x < len(player[turn].currentStatus); x++ {
+          if tempStatus.name == player[turn].currentStatus[x].name {
+            player[turn].currentStatus[x].stacks += tempStatus.stacks
+          }
+        }
+      }
+    } //debuff check end
+    //calculating enemy final damage
+    mob.damageDeal = enemyDamageDealt(mob)
+    // Player(s) turn
+    for q := 0; q < playerNum; q++ {
+    combatUI(mob)
+      if q == 1 {
+        turn = 0
+      }
+      //card draw
+      for x := 0; x < 5; x++ {
+        drawCard()
+      }
+      handDisplay()
+      choiceString = ""
+      choiceInt = -1
+      for !(strings.EqualFold(choiceString, "end")) {
+        if playerNum == 1 {
+          if mob.hp <= 0 || player[0].hp <= 0 {
+            mob.hp = 0
+            break
+          }
+        } else if playerNum == 2 {
+          if mob.hp <= 0 || player[0].hp <= 0 || player[1].hp <= 0 {
+            mob.hp = 0
+            break 
+          }  
+        }
+        choiceString = ""
+        choiceInt = -1
+        uniScanner()
+        if strings.EqualFold(choiceString, "play") && player[turn].ap > 0 {
+          if !(cardUse < 1 || cardUse > 10) {
+            mob = playCard(cardUse-1, mob)
+            combatUI(mob)
+            handDisplay()
+            cardUse = 0
+          }
+        }
+        if strings.EqualFold(choiceString, "enemy status") || strings.EqualFold(choiceString, "estat") || strings.EqualFold(choiceString, "en stat") {
+          enemyStatusDisplay(mob)
+        }
+        if strings.EqualFold(choiceString, "player status") || strings.EqualFold(choiceString, "pstat") || strings.EqualFold(choiceString, "play stat") {
+          playerStatusDisplay(turn)
+        }
+        switch {
+          case !(choiceInt < 1 || choiceInt > 10): 
+          if choiceInt > len(player[turn].hand) {
+            sideDisplayReset()
+            pf("\033[H\033[2B\033[42C   NO INFORMATION")
+          } else {
+            cardUse = choiceInt
+            cardDisplay(player[turn].hand[choiceInt-1]) 
+          }
+          // drawCard()
+          // handDisplay()
+        } 
+        p("\033[H\033[19B")
+        // } else {
+        //   cardDisplay(player[turn].hand[choiceInt+1])
+        // }
+      }
+      player[turn].discardPile = append(player[turn].discardPile, player[turn].hand...)
+      player[turn].hand = []cardInfo{}
+    }
+    mob.defence = 0
+    for x := 0; x < len(mob.currentStatus); x++ {
+      if mob.currentStatus[x].intensity == false {
+        mob.currentStatus[x].stacks--
+      }
+      if mob.currentStatus[x].stacks <= 0 &&  len(mob.currentStatus) == 1 {
+        mob.currentStatus = []buff{}
+      } else if mob.currentStatus[x].stacks <= 0 && len(mob.currentStatus) > 1 {
+        mob.currentStatus[x] = mob.currentStatus[len(mob.currentStatus)-1]
+        mob.currentStatus = mob.currentStatus[:len(mob.currentStatus)-1]
+      }
+    }
+    if playerNum == 1 {
+      if mob.hp <= 0 || player[0].hp <= 0 {
+        mob.hp = 0
+        break
+      }
+    } else if playerNum == 2 {
+      if mob.hp <= 0 || player[0].hp <= 0 || player[1].hp <= 0 {
+        mob.hp = 0
+        break 
+      }  
+    }
+    combatUI(mob)
+    // removing  debuffs/buffs stacks
+      if len(player[turn].currentStatus) > 0 {
+        for a := 0; a < len(player[turn].currentStatus); a++ {
+          if player[turn].currentStatus[a].intensity == false {
+            player[turn].currentStatus[a].stacks--
+          }
+        }
+      }
+  }
+  combatEnd()
+  if mob.name == f3Mobs[0].name {
+    THE_PROGRAMMERS_WHIM()
+  }
+}
+
+func THE_PROGRAMMERS_WHIM() {
+  p(clr)
+  pl("hey")
+  time.Sleep(2500 * time.Millisecond)
+  pl("i'm the programmer")
+  time.Sleep(1900 * time.Millisecond)
+  pl("so, there is no actual story")
+  time.Sleep(1900 * time.Millisecond)
+  pl("I made this world based a whim to rereate the functions of a game I enjoyed")
+  time.Sleep(3900 * time.Millisecond)
+  pl("you're exitence here is pointless")
+  time.Sleep(4500 * time.Millisecond)
+  pl("to be honest, my program isn't even finished")
+  time.Sleep(3200 * time.Millisecond)
+  pl("neither is it up to expectations")
+  time.Sleep(3000 * time.Millisecond)
+  pl("well, good job on making it to the end")
+  time.Sleep(4000 * time.Millisecond)
+  pl("i'm gonna delete this world from existence pretty soon")
+  time.Sleep(4400 * time.Millisecond)
+  pl("thanks for trying this half-baked version of Slay the Spire")
+  time.Sleep(1000 * time.Millisecond)
+  pl("go play the real game")
+  time.Sleep(1000 * time.Millisecond)
+  pl("peace")
+  os.Exit(0)
+}
+
+//card Use
+func playCard(placement int, enemy mobInfo)mobInfo {
+  card := player[turn].hand[placement]
+  player[turn].ap -= card.ap
+  if player[turn].ap < 0 {
+    player[turn].ap += card.ap
+    return enemy
+  }
+  player[turn].discardPile = append(player[turn].discardPile, player[turn].hand[placement])
+  player[turn].hand = cardRemoveSlice(player[turn].hand, placement)
+  for x := 0; x < len(player[turn].currentStatus); x++ {
+    // attacking affect
+    if player[turn].currentStatus[x].name == "Strength" {
+      card.damage += player[turn].currentStatus[x].stacks
+    }
+    if player[turn].currentStatus[x].name == "Weak" {
+      card.damage = card.damage * 3/4
+    }
+    // defending affect
+    if card.block != 0 {
+      if player[turn].currentStatus[x].name == "Dexterity" {
+        card.block += player[turn].currentStatus[x].stacks
+      }
+      if player[turn].currentStatus[x].name == "Frail" {
+        card.block = card.block * 3/4
+      } 
+    }
+  }
+  for x := 0; x < len(enemy.currentStatus); x++ {
+    if enemy.currentStatus[x].name == "Vulnerable" {
+      multiplier := card.damage / 2
+      card.damage += multiplier
+    }      
+  }
+  switch {
+    case card.cardtype == "Attack":
+    card.damage -= enemy.defence
+    if card.damage >= 0 {
+      enemy.defence = 0
+    } else {
+      enemy.defence += card.damage
+      card.damage = 0
+    }
+    enemy.hp -= card.damage
+    case card.cardtype == "Skill":
+    player[turn].block += card.block
+  }
+  if card.apply == true {
+    var inStatus bool
+    tempStatus := card.debuff
+    if len(enemy.currentStatus) > 0 {
+      for x := 0; x < len(enemy.currentStatus); x++ {
+        num := 0
+        if tempStatus.name == enemy.currentStatus[x].name {
+          enemy.currentStatus[x].stacks += tempStatus.stacks
+          num++
+        }
+        if num > 0 {
+          inStatus = true
+        }
+      }
+    }
+    if inStatus == false {
+      enemy.currentStatus = append(enemy.currentStatus, tempStatus)
+    }
+  }
+  return enemy
+}
+
+// drawing cards
+func drawCard() {
+  if len(player[turn].drawPile) == 0 {
+    player[turn].drawPile = player[turn].discardPile
+    player[turn].discardPile = []cardInfo{}
+  }
+  rand.Seed(time.Now().UnixNano())
+  tempCardNum := rand.Intn(len(player[turn].drawPile))
+  if len(player[turn].hand) == 10 {
+    player[turn].discardPile = append(player[turn].discardPile, player[turn].drawPile[tempCardNum])
+  } else {
+    player[turn].hand = append(player[turn].hand, player[turn].drawPile[tempCardNum])
+  }
+  player[turn].drawPile = cardRemoveSlice(player[turn].drawPile, tempCardNum)
+}
+
+// calc how much damage enemy deals
+func enemyDamageDealt(enemy mobInfo)int {
+  if len(enemy.currentStatus) > 0 {
+    for x := 0; x < len(enemy.currentStatus); x++ {
+      if enemy.currentStatus[x].name == "Strength" {
+        enemy.damageDeal += enemy.currentStatus[x].stacks
+      }
+      if enemy.currentStatus[x].name == "Weak" {
+        enemy.damageDeal = enemy.damageDeal * 3/4
+      }
+    }
+    for x := 0; x < len(player[turn].currentStatus); x++ {
+      if player[turn].currentStatus[x].name == "Vulnerable" {
+        enemy.damageDeal += enemy.damageDeal / 2
+      }   
+    }
+  }
+  return enemy.damageDeal
+}
+
+//card removeal service
+func cardRemoveSlice(slice[] cardInfo, location int)[]cardInfo {
+  slice[location] = slice[len(slice)-1]
+  return slice[:len(slice)-1]
+}
+  
+//universal scanner
+func uniScanner()bool { // custom scanner to scan strings and ints
+	scanner := bufio.NewScanner(os.Stdin)
+  var typeChosen bool //true == string false == int 
+	var typeString string
+	var typeInt int = -1
+  choiceInt = -1
+  choiceString = ""
+	for len(typeString) == 0 || typeInt == -1{
+		scanner.Scan()
+    p("\033[1A\033[2K")
+		typeString = scanner.Text()
+		typeInt, _ = strconv.Atoi(scanner.Text())
+		if typeInt > 0 {
+			choiceInt = typeInt
+		}
+    if len(typeString) > 0 && typeString != "0" {
+			choiceString = typeString
+			typeChosen = true
+		}
+	}
+  return typeChosen
+}
